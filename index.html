@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor PDF a Flipbook Centrado</title>
+    
+    <style>
+        body {
+            background-color: #2b2b2b; /* Un gris oscuro más elegante */
+            font-family: Arial, sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh; /* Ocupa toda la altura de la pantalla */
+            overflow: hidden; /* Evita scroll doble */
+        }
+
+        /* Barra superior */
+        .controls {
+            background: white;
+            padding: 10px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 100;
+            height: 60px; /* Altura fija para la barra */
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        /* Contenedor FLEX que centra el libro */
+        .book-wrapper {
+            flex-grow: 1; /* Ocupa todo el espacio restante */
+            display: flex;
+            justify-content: center; /* Centrado Horizontal */
+            align-items: center;     /* Centrado Vertical */
+            width: 100%;
+            height: calc(100vh - 60px); /* Restamos la altura de la barra */
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Estilos de las páginas */
+        .page {
+            background-color: white;
+            /* Sombra sutil interna para dar efecto de papel */
+            box-shadow: inset -3px 0 10px rgba(0,0,0,0.1); 
+            border: 1px solid #ddd;
+        }
+
+        /* CORRECCIÓN PRINCIPAL: El canvas ocupa exactamente el tamaño de la página */
+        canvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+            object-fit: cover;
+        }
+
+        /* Mensaje de carga */
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+            z-index: 200;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <label style="font-weight: bold; margin-bottom: 5px; display: block;">Selecciona tu PDF</label>
+        <input type="file" id="upload-pdf" accept=".pdf">
+    </div>
+
+    <div id="loading">Procesando PDF...</div>
+
+    <div class="book-wrapper">
+        <div id="book">
+            </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/page-flip/dist/js/page-flip.browser.js"></script>
+
+    <script>
+        const fileInput = document.getElementById('upload-pdf');
+        const bookElement = document.getElementById('book');
+        const loadingMsg = document.getElementById('loading');
+        let pageFlip = null;
+
+        fileInput.addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Limpiar libro anterior
+            if (pageFlip) {
+                pageFlip.destroy(); // Destruye la instancia anterior
+                // Eliminamos las páginas viejas del DOM manualmente para asegurar limpieza
+                while (bookElement.firstChild) {
+                    bookElement.removeChild(bookElement.firstChild);
+                }
+            }
+
+            loadingMsg.style.display = 'block';
+
+            const fileReader = new FileReader();
+            fileReader.onload = async function() {
+                const typedarray = new Uint8Array(this.result);
+
+                try {
+                    const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                    console.log("PDF Cargado. Páginas:", pdf.numPages);
+
+                    // Variables para capturar el tamaño real del PDF
+                    let pdfWidth = 0;
+                    let pdfHeight = 0;
+
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        
+                        // Usamos escala 1.5 o 2 para buena calidad
+                        const scale = 1.5; 
+                        const viewport = page.getViewport({ scale: scale });
+
+                        // Capturamos las dimensiones de la primera página para configurar el libro
+                        if (i === 1) {
+                            pdfWidth = viewport.width;
+                            pdfHeight = viewport.height;
+                        }
+
+                        const div = document.createElement('div');
+                        div.className = 'page';
+                        
+                        const canvas = document.createElement('canvas');
+                        div.appendChild(canvas);
+                        
+                        canvas.width = viewport.width;
+                        canvas.height = viewport.height;
+
+                        const renderContext = {
+                            canvasContext: canvas.getContext('2d'),
+                            viewport: viewport
+                        };
+                        await page.render(renderContext).promise;
+                        
+                        bookElement.appendChild(div);
+                    }
+
+                    // Iniciamos el libro con las dimensiones exactas del PDF
+                    initFlipBook(pdfWidth, pdfHeight);
+                    loadingMsg.style.display = 'none';
+
+                } catch (error) {
+                    console.error(error);
+                    alert("Error al procesar el PDF.");
+                    loadingMsg.style.display = 'none';
+                }
+            };
+            fileReader.readAsArrayBuffer(file);
+        });
+
+        function initFlipBook(w, h) {
+            // Ajustamos el tamaño máximo para que no se salga de la pantalla
+            // pero manteniendo la proporción exacta del PDF (w y h)
+            
+            pageFlip = new St.PageFlip(bookElement, {
+                width: w,  // Usamos el ancho real del PDF
+                height: h, // Usamos el alto real del PDF
+                
+                size: 'stretch', // Estirar para ajustar al contenedor padre
+                
+                // Estos min/max ayudan a la responsividad
+                minWidth: w / 4,
+                maxWidth: w * 2,
+                minHeight: h / 4,
+                maxHeight: h * 2,
+
+                maxShadowOpacity: 0.5,
+                showCover: true,
+                mobileScrollSupport: false 
+            });
+
+            pageFlip.loadFromHTML(document.querySelectorAll('.page'));
+        }
+    </script>
+</body>
+</html>
